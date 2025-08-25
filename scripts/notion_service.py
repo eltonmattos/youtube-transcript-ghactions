@@ -5,7 +5,7 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
 
 def create_page(title: str, blocks: list[str]) -> None:
-    """Cria página no Notion com título e blocos de texto"""
+    """Cria pagina no Notion com titulo e blocos de texto"""
     url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {NOTION_TOKEN}",

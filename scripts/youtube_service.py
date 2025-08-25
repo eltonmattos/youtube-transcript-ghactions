@@ -5,7 +5,7 @@ import yt_dlp
 SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
 
 def get_transcript(video_url: str, lang: str = "pt") -> str:
-    """Obtém a transcrição via Supadata API"""
+    """Obtem a transcricaoo via Supadata API"""
     endpoint = "https://api.supadata.ai/youtube/transcript"
     headers = {"Authorization": f"Bearer {SUPADATA_API_KEY}"}
     params = {"url": video_url, "lang": lang}
@@ -16,7 +16,7 @@ def get_transcript(video_url: str, lang: str = "pt") -> str:
     return data.get("transcript", "")
 
 def get_metadata(video_url: str) -> dict:
-    """Obtém título e canal sem custo usando yt-dlp"""
+    """Obtem titulo e canal sem custo usando yt-dlp"""
     ydl_opts = {"quiet": True, "skip_download": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(video_url, download=False)
@@ -26,7 +26,7 @@ def get_metadata(video_url: str) -> dict:
         }
 
 def get_video_data(video_url: str, lang: str = "pt") -> dict:
-    """Combina metadados + transcrição"""
+    """Combina metadados + transcricao"""
     transcript = get_transcript(video_url, lang)
     metadata = get_metadata(video_url)
     return {

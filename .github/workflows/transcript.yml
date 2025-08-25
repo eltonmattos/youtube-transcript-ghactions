@@ -22,7 +22,8 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install yt-dlp==2025.1.26 requests==2.32.3
 
       - name: Run pipeline
         env:

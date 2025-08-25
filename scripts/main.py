@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 from youtube_service import get_video_data
@@ -29,9 +30,9 @@ def run_pipeline(video_urls: list[str]):
         create_page(title, blocks)
 
 if __name__ == "__main__":
-    # Recebe lista de URLs como argumento separado por vírgula
+    # Recebe lista de URLs como argumento separado por virgula
     if len(sys.argv) < 2:
-        print("Por favor, passe a lista de URLs de vídeos como argumento.")
+        print("Por favor, passe a lista de URLs de videos como argumento.")
         sys.exit(1)
 
     urls_input = sys.argv[1]
