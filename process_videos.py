@@ -1,173 +1,186 @@
 import os
-import sys
+import argparse
 import requests
 import time
+from notion_client import Client
+from bs4 import BeautifulSoup
+
+# Dependendo do AI_MODEL, usa OpenAI ou Gemini
 import openai
-import google.generativeai as genai
+try:
+    import google.generativeai as gemini
+except ImportError:
+    gemini = None
 
-# ==============================
-# Configurações via variáveis
-# ==============================
-NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
+# Configurações
 SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
-AI_MODEL = os.getenv("AI_MODEL", "").strip()
-AI_PROMPT = os.getenv("AI_PROMPT", "Transforme o seguinte texto:")
-
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")  # não secret
+AI_MODEL = os.getenv("AI_MODEL")
+AI_PROMPT = os.getenv("AI_PROMPT") or "Resuma o seguinte texto:"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not NOTION_TOKEN or not NOTION_PARENT_ID:
-    print("ERROR: Variáveis do Notion não configuradas.")
-    sys.exit(1)
+# Inicializa Notion
+notion = None
+if NOTION_TOKEN and NOTION_PARENT_ID:
+    try:
+        notion = Client(auth=NOTION_TOKEN)
+        print(f"INFO: Notion configurado com sucesso")
+    except Exception as e:
+        print(f"ERROR: Erro ao configurar Notion: {e}")
 
-if not SUPADATA_API_KEY:
-    print("ERROR: SUPADATA_API_KEY não configurada.")
-    sys.exit(1)
+# Configura OpenAI/Gemini
+if AI_MODEL.startswith("gpt") and OPENAI_API_KEY:
+    openai.api_key = OPENAI_API_KEY
+elif AI_MODEL.startswith("gemini") and GEMINI_API_KEY and gemini:
+    gemini.configure(api_key=GEMINI_API_KEY)
 
-if not AI_MODEL:
-    print("ERROR: AI_MODEL não configurada.")
-    sys.exit(1)
+# --- Funções ---
+def fetch_transcript(video_url):
+    """Obtem a transcrição via SupaData (text=False)"""
+    headers = {"x-api-key": SUPADATA_API_KEY}
+    params = {"url": video_url, "text": False}
+    try:
+        resp = requests.get("https://api.supadata.ai/v1/youtube/transcript", headers=headers, params=params, timeout=60)
+        if resp.status_code == 202:
+            # Job async
+            job_id = resp.json().get("jobId")
+            return wait_transcript_job(job_id)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("content")
+        if isinstance(content, list):
+            return " ".join(seg.get("text", "") for seg in content)
+        elif isinstance(content, str):
+            return content
+        return ""
+    except Exception as e:
+        print(f"ERROR: Falha ao processar vídeo {video_url}: {e}")
+        return None
 
-print("INFO: Notion configurado com sucesso")
-print(f"INFO: NOTION_PARENT_ID='{NOTION_PARENT_ID}'")
-print(f"INFO: AI_MODEL='{AI_MODEL}'")
-print(f"INFO: AI_PROMPT='{AI_PROMPT}'")
+def wait_transcript_job(job_id):
+    headers = {"x-api-key": SUPADATA_API_KEY}
+    while True:
+        resp = requests.get(f"https://api.supadata.ai/v1/transcript/{job_id}", headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            status = data.get("status")
+            if status == "completed":
+                content = data.get("content", [])
+                return " ".join(seg.get("text", "") for seg in content) if isinstance(content, list) else content
+            elif status == "failed":
+                return None
+        time.sleep(5)
 
-# ==============================
-# Funções auxiliares
-# ==============================
+def fetch_playlist_videos(playlist_url):
+    """Obtém vídeos de uma playlist via SupaData"""
+    headers = {"x-api-key": SUPADATA_API_KEY}
+    params = {"url": playlist_url}
+    try:
+        resp = requests.get("https://api.supadata.ai/v1/youtube/playlist", headers=headers, params=params, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        return [v.get("url") for v in data.get("videos", []) if v.get("url")]
+    except Exception as e:
+        print(f"ERROR: Falha ao obter vídeos da playlist {playlist_url}: {e}")
+        return []
 
-def get_playlist_videos(playlist_url: str):
-    """Obtém lista de vídeos de uma playlist usando SupaData"""
-    api_url = f"https://api.supadata.ai/playlist?url={playlist_url}"
-    headers = {"Authorization": f"Bearer {SUPADATA_API_KEY}"}
-    resp = requests.get(api_url, headers=headers, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    return [item["url"] for item in data.get("videos", [])]
-
-
-def get_video_transcript(video_url: str):
-    """Obtém transcrição e título do vídeo"""
-    api_url = f"https://api.supadata.ai/get-transcript?url={video_url}"
-    headers = {"Authorization": f"Bearer {SUPADATA_API_KEY}"}
-    resp = requests.get(api_url, headers=headers, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    text = " ".join([seg["text"] for seg in data.get("segments", [])])
-    title = data.get("title", "Transcrição")
-    return title, text
-
-
-def split_paragraphs(text, max_len=2000):
-    """Divide texto em blocos <= 2000 caracteres"""
-    paragraphs = []
-    current = ""
-    for line in text.split("\n"):
-        if len(current) + len(line) + 1 > max_len:
-            paragraphs.append(current.strip())
-            current = line
-        else:
-            current += " " + line
-    if current:
-        paragraphs.append(current.strip())
-    return paragraphs
-
+def get_video_title(video_url):
+    """Pega o título do vídeo via scraping (sem usar cota da SupaData)"""
+    try:
+        resp = requests.get(video_url)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        title = soup.title.string.replace(" - YouTube", "").strip()
+        return title
+    except Exception as e:
+        print(f"ERROR: Não foi possível obter título: {e}")
+        return video_url.split("v=")[-1]
 
 def process_with_ai(text):
-    """Envia texto para OpenAI ou Gemini"""
-    if AI_MODEL.startswith("gpt"):
-        if not OPENAI_API_KEY:
-            print("WARNING: OPENAI_API_KEY não configurada, retornando texto original")
-            return text
-        openai.api_key = OPENAI_API_KEY
+    """Envia texto ao modelo definido por AI_MODEL"""
+    if not text:
+        return ""
+    if AI_MODEL.startswith("gpt") and openai.api_key:
         try:
-            response = openai.chat.completions.create(
+            resp = openai.ChatCompletion.create(
                 model=AI_MODEL,
-                messages=[
-                    {"role": "system", "content": AI_PROMPT},
-                    {"role": "user", "content": text}
-                ],
-                temperature=0.7,
+                messages=[{"role": "user", "content": AI_PROMPT + "\n" + text}]
             )
-            return response.choices[0].message.content.strip()
+            return resp.choices[0].message.content
         except Exception as e:
-            print(f"ERROR: Erro no OpenAI: {e}")
+            print(f"ERROR: OpenAI: {e}")
             return text
-
-    elif AI_MODEL.startswith("gemini"):
-        if not GEMINI_API_KEY:
-            print("WARNING: GEMINI_API_KEY não configurada, retornando texto original")
-            return text
-        genai.configure(api_key=GEMINI_API_KEY)
+    elif AI_MODEL.startswith("gemini") and GEMINI_API_KEY and gemini:
         try:
-            model = genai.GenerativeModel(AI_MODEL)
-            response = model.generate_content(f"{AI_PROMPT}\n\n{text}")
-            return response.text.strip()
+            return gemini.chat(messages=[{"author": "user", "content": AI_PROMPT + "\n" + text}]).last
         except Exception as e:
-            print(f"ERROR: Erro no Gemini: {e}")
+            print(f"ERROR: Gemini: {e}")
             return text
     else:
-        print("WARNING: Modelo desconhecido, retornando texto original")
-        return text
+        return text  # fallback
 
-
-def send_to_notion(title, text):
-    """Envia texto ao Notion como página"""
-    blocks = [{"object": "block", "type": "paragraph", "paragraph": {
-        "rich_text": [{"type": "text", "text": {"content": chunk}}]
-    }} for chunk in split_paragraphs(text)]
-
-    payload = {
-        "parent": {"database_id": NOTION_PARENT_ID},
-        "properties": {"title": {"title": [{"text": {"content": title}}]}},
-        "children": blocks
-    }
-
-    headers = {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-    }
-
-    resp = requests.post("https://api.notion.com/v1/pages",
-                         headers=headers, json=payload, timeout=60)
-
-    if resp.status_code == 200:
-        print(f"INFO: Página '{title}' criada no Notion ({len(blocks)} blocos)")
-    else:
-        print(f"ERROR: Erro ao criar página no Notion: {resp.text}")
-
-
-# ==============================
-# Execução principal
-# ==============================
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Uso: python script.py <url1> [url2 ...]")
-        sys.exit(1)
-
-    urls = sys.argv[1:]
-
-    for url in urls:
-        # Se for playlist, expande para vídeos
-        if "list=" in url:
-            print(f"INFO: Obtendo vídeos da playlist {url}")
-            try:
-                videos = get_playlist_videos(url)
-                urls.extend(videos)
-            except Exception as e:
-                print(f"ERROR: Falha ao obter playlist: {e}")
+def split_paragraphs(text, max_len=2000):
+    """Divide texto em parágrafos e em blocos ≤ max_len"""
+    paras = text.split("\n")
+    blocks = []
+    for p in paras:
+        p = p.strip()
+        if not p:
             continue
+        while len(p) > max_len:
+            blocks.append(p[:max_len])
+            p = p[max_len:]
+        blocks.append(p)
+    return blocks
 
-        # Caso seja um vídeo
-        print(f"INFO: Processando vídeo {url}...")
-        try:
-            title, transcript = get_video_transcript(url)
-            print(f"INFO: Transcrição obtida ({len(transcript)} caracteres)")
-            processed = process_with_ai(transcript)
-            print(f"INFO: Texto processado ({len(processed)} caracteres)")
-            send_to_notion(title, processed)
-        except Exception as e:
-            print(f"ERROR: Falha ao processar vídeo {url}: {e}")
+def create_notion_page(title, text):
+    if not notion:
+        print("WARNING: Notion não configurado, pulando")
+        return
+    blocks = split_paragraphs(text)
+    children = [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": b}}]}} for b in blocks]
+    try:
+        notion.pages.create(
+            parent={"page_id": NOTION_PARENT_ID},
+            properties={"title": [{"type": "text", "text": {"content": title}}]},
+            children=children
+        )
+        print(f"INFO: Página '{title}' criada no Notion ({len(blocks)} blocos)")
+    except Exception as e:
+        print(f"ERROR: Falha ao criar página no Notion: {e}")
+
+# --- Main ---
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("videos", nargs="+", help="URLs ou IDs de vídeos/playlist")
+    args = parser.parse_args()
+
+    video_urls = []
+
+    # Separar vídeos de playlists
+    for vid in args.videos:
+        if "playlist" in vid:
+            video_urls.extend(fetch_playlist_videos(vid))
+        elif vid.startswith("http"):
+            video_urls.append(vid)
+        else:
+            video_urls.append(f"https://www.youtube.com/watch?v={vid}")
+
+    if not video_urls:
+        print("WARNING: Nenhum vídeo para processar")
+        return
+
+    for video_url in video_urls:
+        print(f"INFO: Processando vídeo {video_url}...")
+        title = get_video_title(video_url)
+        transcript = fetch_transcript(video_url)
+        if not transcript:
+            print(f"ERROR: Transcrição não disponível para {video_url}")
+            continue
+        processed_text = process_with_ai(transcript)
+        create_notion_page(title, processed_text)
+
+if __name__ == "__main__":
+    main()
