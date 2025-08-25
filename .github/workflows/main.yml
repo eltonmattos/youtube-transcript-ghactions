@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
       videos:
-        description: 'IDs de vídeos do YouTube separados por vírgula'
+        description: 'IDs ou URLs de vídeos do YouTube separados por vírgula'
         required: false
         default: ''
 
@@ -36,9 +36,10 @@ jobs:
         run: |
           # Converte lista de vídeos em argumentos para o script
           if [ -n "${{ github.event.inputs.videos }}" ]; then
-            VIDEOS_ARG=$(echo "${{ github.event.inputs.videos }}" | tr ',' ' ')
+            VIDEOS_ARG="${{ github.event.inputs.videos }}"
             python process_videos.py --videos $VIDEOS_ARG
           elif [ -n "${{ github.event.inputs.playlist }}" ]; then
             python process_videos.py --playlist "${{ github.event.inputs.playlist }}"
           else
             echo "Nenhuma playlist ou vídeo fornecido"
+          fi
