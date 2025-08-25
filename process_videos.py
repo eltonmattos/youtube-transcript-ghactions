@@ -11,40 +11,51 @@ NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Inicializa cliente Notion
-notion = Client(auth=NOTION_TOKEN) if NOTION_TOKEN else None
+notion = None
+if NOTION_TOKEN and NOTION_PARENT_ID:
+    try:
+        notion = Client(auth=NOTION_TOKEN)
+        print("✅ Notion configurado com sucesso")
+    except Exception as e:
+        print(f"⚠️ Erro ao configurar Notion: {e}")
 
 SUPADATA_TRANSCRIPT_ENDPOINT = "https://api.supadata.ai/v1/youtube/transcript"
 SUPADATA_PLAYLIST_ENDPOINT = "https://api.supadata.ai/v1/youtube/playlist"
 
 def fetch_transcript(video_url):
-    """Obtém a transcrição de um vídeo via Supadata"""
     headers = {"x-api-key": SUPADATA_API_KEY}
     params = {"url": video_url}
     try:
         resp = requests.get(SUPADATA_TRANSCRIPT_ENDPOINT, headers=headers, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        return data.get("transcript")
+        transcript = data.get("transcript")
+        if not transcript:
+            print(f"⚠️ Supadata retornou vazio para {video_url}: {data}")
+        return transcript
     except Exception as e:
-        print(f"Erro ao obter transcrição de {video_url}: {e}")
+        print(f"⚠️ Erro ao obter transcrição de {video_url}: {e}")
         return None
 
 def fetch_playlist_videos(playlist_url):
-    """Obtém lista de vídeos de uma playlist via Supadata"""
     headers = {"x-api-key": SUPADATA_API_KEY}
     params = {"url": playlist_url}
     try:
         resp = requests.get(SUPADATA_PLAYLIST_ENDPOINT, headers=headers, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
-        # Retorna lista de URLs ou IDs
-        return [item.get("url") for item in data.get("videos", []) if item.get("url")]
+        videos = [item.get("url") for item in data.get("videos", []) if item.get("url")]
+        if not videos:
+            print(f"⚠️ Nenhum vídeo retornado para playlist {playlist_url}: {data}")
+        return videos
     except Exception as e:
-        print(f"Erro ao obter vídeos da playlist {playlist_url}: {e}")
+        print(f"⚠️ Erro ao obter vídeos da playlist {playlist_url}: {e}")
         return []
 
 def summarize_text(text):
-    """Gera resumo usando OpenAI"""
+    if not openai.api_key:
+        print("⚠️ OpenAI não configurado, pulando resumo")
+        return None
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
@@ -52,12 +63,12 @@ def summarize_text(text):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print(f"Erro no OpenAI: {e}")
+        print(f"⚠️ Erro no OpenAI: {e}")
         return None
 
 def create_notion_page(title, content):
-    """Cria página no Notion"""
     if not notion:
+        print("⚠️ Notion não configurado, pulando criação de página")
         return
     try:
         notion.pages.create(
@@ -69,9 +80,9 @@ def create_notion_page(title, content):
                 "paragraph": {"text": [{"type": "text", "text": {"content": content}}]}
             }]
         )
-        print(f"Página '{title}' criada no Notion ✅")
+        print(f"✅ Página '{title}' criada no Notion")
     except Exception as e:
-        print(f"Erro ao criar página no Notion: {e}")
+        print(f"⚠️ Erro ao criar página no Notion: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Obter transcrições e resumos via Supadata")
@@ -95,7 +106,7 @@ def main():
         video_urls.extend(playlist_videos)
 
     if not video_urls:
-        print("Nenhum vídeo fornecido")
+        print("⚠️ Nenhum vídeo fornecido para processar")
         return
 
     for video_url in video_urls:
@@ -103,8 +114,11 @@ def main():
         transcript = fetch_transcript(video_url)
         if not transcript:
             continue
+        print(f"✅ Transcrição obtida ({len(transcript)} caracteres)")
 
         summary = summarize_text(transcript) or "Resumo não disponível"
+        print(f"✅ Resumo gerado ({len(summary)} caracteres)")
+
         md_content = f"# Transcrição\n\n{transcript}\n\n---\n\n# Resumo\n\n{summary}"
         create_notion_page(f"Transcrição {video_url.split('=')[-1]}", md_content)
 
