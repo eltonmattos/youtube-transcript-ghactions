@@ -1,13 +1,13 @@
 import os
 import argparse
-from youtube_transcript_api import YouTubeTranscriptApi
-from pytube import Playlist
+import requests
+from yt_dlp import YoutubeDL
 import openai
 from notion_client import Client
 
 # Configurações Notion
-NOTION_TOKEN = os.getenv("NOTION_TOKEN")           # Token da integração
-NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")   # ID da página ou database
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
 
 # Configura OpenAI
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -15,18 +15,46 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # Inicializa cliente Notion
 notion = Client(auth=NOTION_TOKEN)
 
-def download_transcript(video_id):
-    """Baixa a transcrição do vídeo pelo ID usando a nova API"""
-    try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        # Tenta encontrar transcrição em português ou inglês
-        transcript = transcript_list.find_transcript(['pt', 'en'])
-        # Busca o conteúdo
-        text = " ".join([t["text"] for t in transcript.fetch()])
-        return text
-    except Exception as e:
-        print(f"Erro ao baixar transcrição de {video_id}: {e}")
-        return None
+def download_transcript(video_url):
+    """
+    Baixa transcrição priorizando:
+    1) Legenda manual pt-BR
+    2) Legenda automática pt-BR
+    Retorna texto simples
+    """
+    ydl_opts = {
+        'skip_download': True,
+        'writesubtitles': True,
+        'subtitlesformat': 'vtt',
+        'quiet': True
+    }
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(video_url, download=False)
+
+        # Legenda manual pt-BR
+        subs = info.get('subtitles') or {}
+        if 'pt-BR' in subs:
+            url = subs['pt-BR'][0]['url']
+            return clean_vtt(requests.get(url).text)
+
+        # Legenda automática pt-BR
+        auto_subs = info.get('automatic_captions') or {}
+        if 'pt-BR' in auto_subs:
+            url = auto_subs['pt-BR'][0]['url']
+            return clean_vtt(requests.get(url).text)
+
+    return None
+
+def clean_vtt(vtt_text):
+    """Converte VTT em texto simples removendo timestamps"""
+    lines = vtt_text.splitlines()
+    clean_lines = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("WEBVTT") or '-->' in line:
+            continue
+        clean_lines.append(line)
+    return " ".join(clean_lines)
 
 def process_with_openai(text):
     """Gera resumo usando OpenAI"""
@@ -41,7 +69,7 @@ def process_with_openai(text):
         return None
 
 def create_notion_page(title, content):
-    """Cria uma página no Notion com título e conteúdo em Markdown"""
+    """Cria página no Notion com título e conteúdo em Markdown"""
     try:
         notion.pages.create(
             parent={"type": "page_id", "page_id": NOTION_PARENT_ID},
@@ -59,37 +87,36 @@ def create_notion_page(title, content):
 def main():
     parser = argparse.ArgumentParser(description="Baixar transcrições e enviar ao Notion")
     parser.add_argument("--playlist", type=str, help="URL da playlist do YouTube")
-    parser.add_argument("--videos", nargs="+", help="IDs de vídeos do YouTube separados por espaço")
+    parser.add_argument("--videos", nargs="+", help="IDs ou URLs de vídeos do YouTube")
     args = parser.parse_args()
 
-    video_ids = []
+    video_list = []
 
-    # Coleta vídeos da playlist
+    # Se passou playlist
     if args.playlist:
-        try:
-            p = Playlist(args.playlist)
-            video_ids.extend([v.video_id for v in p.videos])
-        except Exception as e:
-            print(f"Erro ao carregar playlist: {e}")
+        ydl_opts = {'quiet': True}
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(args.playlist, download=False)
+            video_list.extend([entry['webpage_url'] for entry in info['entries']])
 
-    # Coleta vídeos passados manualmente
+    # Se passou lista de vídeos
     if args.videos:
-        video_ids.extend(args.videos)
+        video_list.extend(args.videos)
 
-    if not video_ids:
+    if not video_list:
         print("Nenhum vídeo fornecido")
         return
 
-    for vid in video_ids:
-        print(f"\n📺 Processando vídeo {vid}...")
-        text = download_transcript(vid)
-        if not text:
+    for vid_url in video_list:
+        print(f"\n📺 Processando vídeo {vid_url}...")
+        transcript = download_transcript(vid_url)
+        if not transcript:
+            print(f"Transcrição não encontrada para {vid_url}")
             continue
 
-        summary = process_with_openai(text) or "Resumo não disponível"
-        md_content = f"# Transcrição do vídeo {vid}\n\n{text}\n\n---\n\n# Resumo\n\n{summary}"
-
-        create_notion_page(f"Transcrição {vid}", md_content)
+        summary = process_with_openai(transcript) or "Resumo não disponível"
+        md_content = f"# Transcrição\n\n{transcript}\n\n---\n\n# Resumo\n\n{summary}"
+        create_notion_page(f"Transcrição {vid_url}", md_content)
 
 if __name__ == "__main__":
     main()
