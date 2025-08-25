@@ -1,92 +1,90 @@
 import os
 import argparse
-import logging
 import requests
 import time
+import logging
 from notion_client import Client
 from openai import OpenAI
 
-# Configuração do logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-# Variáveis de ambiente
+# ----------------------------
+# Configurações / Variáveis
+# ----------------------------
 SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # pode ser sobrescrito pelo secret
-OPENAI_PROMPT = os.getenv("OPENAI_PROMPT", "Resuma o seguinte texto:")  # secret opcional
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_PROMPT = os.getenv("OPENAI_PROMPT", "Resuma o seguinte texto:")
 
-if not SUPADATA_API_KEY:
-    logging.warning("SUPADATA_API_KEY não configurada, transcrições não funcionarão.")
-if not OPENAI_API_KEY:
-    logging.warning("OPENAI_API_KEY não configurada, resumos serão pulados.")
-if not NOTION_TOKEN or not NOTION_PARENT_ID:
-    logging.warning("Notion não configurado, páginas não serão criadas.")
-
-# Inicializa cliente Notion
+# ----------------------------
+# Inicializa clientes
+# ----------------------------
 notion = None
 if NOTION_TOKEN and NOTION_PARENT_ID:
     try:
         notion = Client(auth=NOTION_TOKEN)
-        logging.info("Notion configurado com sucesso.")
+        logging.info("Notion configurado com sucesso")
     except Exception as e:
-        logging.error(f"Erro ao configurar Notion: {e}")
+        logging.warning(f"Erro ao configurar Notion: {e}")
 
-# Inicializa cliente OpenAI
 client = None
 if OPENAI_API_KEY:
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-SUPADATA_PLAYLIST_ENDPOINT = "https://api.supadata.ai/v1/youtube/playlist"
+# ----------------------------
+# Logging das variáveis não secret
+# ----------------------------
+logging.info(f"NOTION_PARENT_ID='{NOTION_PARENT_ID}'")
+logging.info(f"OPENAI_MODEL='{OPENAI_MODEL}'")
+logging.info(f"OPENAI_PROMPT='{OPENAI_PROMPT}'")
 
-# ---------------- Supadata: Transcrição ----------------
-
+# ----------------------------
+# Funções Supadata
+# ----------------------------
 def verificar_status_transcricao(job_id, api_key):
-    headers = {'x-api-key': api_key}
+    headers = {"x-api-key": api_key}
     while True:
         response = requests.get(f'https://api.supadata.ai/v1/transcript/{job_id}', headers=headers)
         if response.status_code == 200:
             data = response.json()
-            status = data.get('status')
-            if status == 'completed':
-                content = data.get('content', [])
+            status = data.get("status")
+            if status == "completed":
+                content = data.get("content", [])
                 if isinstance(content, list):
-                    return ' '.join(segment.get('text', '') for segment in content)
+                    return " ".join(segment.get("text", "") for segment in content)
                 return content
-            elif status == 'failed':
+            elif status == "failed":
                 return "Erro: Processamento falhou."
         time.sleep(5)
 
 def fetch_transcript(video_url):
-    headers = {'x-api-key': SUPADATA_API_KEY}
-    params = {'url': video_url, 'text': False}
-    
+    headers = {"x-api-key": SUPADATA_API_KEY}
+    params = {"url": video_url, "text": False}
     try:
-        response = requests.get('https://api.supadata.ai/v1/transcript', headers=headers, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            content = data.get('content')
+        resp = requests.get("https://api.supadata.ai/v1/transcript", headers=headers, params=params, timeout=60)
+        if resp.status_code == 200:
+            data = resp.json()
+            content = data.get("content", [])
             if isinstance(content, list):
-                return ' '.join(segment.get('text', '') for segment in content)
+                return " ".join(segment.get("text", "") for segment in content)
             return content
-        elif response.status_code == 202:
-            job_id = response.json().get('jobId')
+        elif resp.status_code == 202:
+            job_id = resp.json().get("jobId")
             return verificar_status_transcricao(job_id, SUPADATA_API_KEY)
         else:
-            logging.error(f"Erro Supadata: {response.status_code} - {response.text}")
+            logging.error(f"Erro Supadata {resp.status_code}: {resp.text}")
             return None
     except Exception as e:
-        logging.error(f"Erro ao obter transcrição: {e}")
+        logging.error(f"Erro ao obter transcrição de {video_url}: {e}")
         return None
-
-# ---------------- Playlist ----------------
 
 def fetch_playlist_videos(playlist_url):
     headers = {"x-api-key": SUPADATA_API_KEY}
     params = {"url": playlist_url}
     try:
-        resp = requests.get(SUPADATA_PLAYLIST_ENDPOINT, headers=headers, params=params, timeout=60)
+        resp = requests.get("https://api.supadata.ai/v1/youtube/playlist", headers=headers, params=params, timeout=60)
         resp.raise_for_status()
         data = resp.json()
         videos = [item.get("url") for item in data.get("videos", []) if item.get("url")]
@@ -97,46 +95,58 @@ def fetch_playlist_videos(playlist_url):
         logging.error(f"Erro ao obter vídeos da playlist {playlist_url}: {e}")
         return []
 
-# ---------------- Resumo OpenAI ----------------
-
+# ----------------------------
+# Função de resumo OpenAI
+# ----------------------------
 def summarize_text(text, chunk_size=3000):
     if not client:
-        return None
+        logging.warning("OpenAI não configurado, pulando resumo")
+        return "Resumo não disponível"
+
+    model = OPENAI_MODEL.strip() if OPENAI_MODEL else None
+    if not model:
+        logging.error("OPENAI_MODEL não definido corretamente!")
+        return "Resumo não disponível"
+
+    logging.info(f"Usando modelo OpenAI: '{model}'")
     summaries = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i:i+chunk_size]
         try:
             response = client.chat.completions.create(
-                model=OPENAI_MODEL,
+                model=model,
                 messages=[{"role": "user", "content": f"{OPENAI_PROMPT}\n{chunk}"}]
             )
             summaries.append(response.choices[0].message.content)
         except Exception as e:
             logging.error(f"Erro no OpenAI: {e}")
+            summaries.append("Erro ao gerar resumo para este trecho.")
     return "\n".join(summaries)
 
-# ---------------- Notion ----------------
-
+# ----------------------------
+# Função Notion
+# ----------------------------
 def create_notion_page(title, content):
     if not notion:
-        logging.warning("Notion não configurado, pulando criação de página.")
+        logging.warning("Notion não configurado, pulando criação de página")
         return
     try:
         notion.pages.create(
             parent={"type": "page_id", "page_id": NOTION_PARENT_ID},
-            properties={"Name": {"title": [{"text": {"content": title}}]}},
+            properties={"title": [{"type": "text", "text": {"content": title}}]},
             children=[{
                 "object": "block",
                 "type": "paragraph",
                 "paragraph": {"text": [{"type": "text", "text": {"content": content}}]}
             }]
         )
-        logging.info(f"Página '{title}' criada no Notion.")
+        logging.info(f"Página '{title}' criada no Notion")
     except Exception as e:
         logging.error(f"Erro ao criar página no Notion: {e}")
 
-# ---------------- Main ----------------
-
+# ----------------------------
+# Main
+# ----------------------------
 def main():
     parser = argparse.ArgumentParser(description="Obter transcrições e resumos via Supadata")
     parser.add_argument("--videos", nargs="+", help="URLs ou IDs de vídeos do YouTube")
