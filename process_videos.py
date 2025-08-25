@@ -4,7 +4,7 @@ import logging
 import requests
 import time
 from notion_client import Client
-import openai
+from openai import OpenAI
 
 # Configuração do logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -13,11 +13,13 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
-openai.api_key = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # pode ser sobrescrito pelo secret
+OPENAI_PROMPT = os.getenv("OPENAI_PROMPT", "Resuma o seguinte texto:")  # secret opcional
 
 if not SUPADATA_API_KEY:
     logging.warning("SUPADATA_API_KEY não configurada, transcrições não funcionarão.")
-if not openai.api_key:
+if not OPENAI_API_KEY:
     logging.warning("OPENAI_API_KEY não configurada, resumos serão pulados.")
 if not NOTION_TOKEN or not NOTION_PARENT_ID:
     logging.warning("Notion não configurado, páginas não serão criadas.")
@@ -30,6 +32,11 @@ if NOTION_TOKEN and NOTION_PARENT_ID:
         logging.info("Notion configurado com sucesso.")
     except Exception as e:
         logging.error(f"Erro ao configurar Notion: {e}")
+
+# Inicializa cliente OpenAI
+client = None
+if OPENAI_API_KEY:
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
 SUPADATA_PLAYLIST_ENDPOINT = "https://api.supadata.ai/v1/youtube/playlist"
 
@@ -93,15 +100,15 @@ def fetch_playlist_videos(playlist_url):
 # ---------------- Resumo OpenAI ----------------
 
 def summarize_text(text, chunk_size=3000):
-    if not openai.api_key:
+    if not client:
         return None
     summaries = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i:i+chunk_size]
         try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": f"Resuma o seguinte texto:\n{chunk}"}]
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": f"{OPENAI_PROMPT}\n{chunk}"}]
             )
             summaries.append(response.choices[0].message.content)
         except Exception as e:
