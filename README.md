@@ -5,18 +5,6 @@ Este projeto baixa **transcrições de vídeos do YouTube**, processa o texto us
 O pipeline é projetado para rodar **100% na nuvem via GitHub Actions**.  
 Você pode rodar manualmente (workflow_dispatch) ou agendado (cron).
 
-
-## 🚀 Estrutura
-
-scripts/
-main.py # Script principal
-youtube_service.py # Extrai transcrições (Supadata) + metadados (yt-dlp)
-ai_service.py # Processa o texto com IA
-notion_service.py # Envia para o Notion
-requirements.txt # Dependências
-
-
-
 ## 🔑 Configuração
 
 ### 1. **Secrets do GitHub**
