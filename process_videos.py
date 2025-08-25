@@ -35,7 +35,7 @@ if OPENAI_API_KEY:
     client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ----------------------------
-# Logging das variáveis não secret
+# Logging variáveis não secret
 # ----------------------------
 logging.info(f"NOTION_PARENT_ID='{NOTION_PARENT_ID}'")
 logging.info(f"OPENAI_MODEL='{OPENAI_MODEL}'")
@@ -97,9 +97,9 @@ def fetch_playlist_videos(playlist_url):
         return []
 
 # ----------------------------
-# Função de envio para IA
+# Função de envio ao OpenAI
 # ----------------------------
-def process_text_with_ai(text, chunk_size=3000):
+def process_text_with_ai(text):
     """
     Envia o texto ao modelo OpenAI e retorna a resposta completa.
     """
@@ -114,35 +114,24 @@ def process_text_with_ai(text, chunk_size=3000):
 
     logging.info(f"Usando modelo OpenAI: '{model}'")
 
-    def call_ai(chunk):
-        retries = 3
-        for attempt in range(retries):
-            try:
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": f"{OPENAI_PROMPT}\n{chunk}"}]
-                )
-                return response.choices[0].message.content
-            except Exception as e:
-                if "429" in str(e):
-                    wait = (2 ** attempt) + random.random()
-                    logging.warning(f"429 Too Many Requests. Tentando novamente em {wait:.1f}s...")
-                    time.sleep(wait)
-                else:
-                    logging.error(f"Erro no OpenAI: {e}")
-                    return chunk
-        logging.error("Falha após várias tentativas, retornando chunk original")
-        return chunk
-
-    if len(text) <= chunk_size:
-        return call_ai(text)
-
-    processed_chunks = []
-    for i in range(0, len(text), chunk_size):
-        chunk = text[i:i+chunk_size]
-        processed_chunks.append(call_ai(chunk))
-
-    return "\n".join(processed_chunks)
+    retries = 3
+    for attempt in range(retries):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": f"{OPENAI_PROMPT}\n{text}"}]
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            if "429" in str(e):
+                wait = (2 ** attempt) + random.random()
+                logging.warning(f"429 Too Many Requests. Tentando novamente em {wait:.1f}s...")
+                time.sleep(wait)
+            else:
+                logging.error(f"Erro no OpenAI: {e}")
+                return text
+    logging.error("Falha após várias tentativas, retornando texto original")
+    return text
 
 # ----------------------------
 # Função Notion
@@ -158,7 +147,7 @@ def create_notion_page(title, content):
             children=[{
                 "object": "block",
                 "type": "paragraph",
-                "paragraph": {"text": [{"type": "text", "text": {"content": content}}]}
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": content}}]}
             }]
         )
         logging.info(f"Página '{title}' criada no Notion")
