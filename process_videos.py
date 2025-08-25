@@ -16,10 +16,13 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 notion = Client(auth=NOTION_TOKEN)
 
 def download_transcript(video_id):
-    """Baixa a transcrição do vídeo pelo ID"""
+    """Baixa a transcrição do vídeo pelo ID usando a nova API"""
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt', 'en'])
-        text = "\n".join([t["text"] for t in transcript])
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # Tenta encontrar transcrição em português ou inglês
+        transcript = transcript_list.find_transcript(['pt', 'en'])
+        # Busca o conteúdo
+        text = " ".join([t["text"] for t in transcript.fetch()])
         return text
     except Exception as e:
         print(f"Erro ao baixar transcrição de {video_id}: {e}")
