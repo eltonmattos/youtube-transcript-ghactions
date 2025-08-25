@@ -26,7 +26,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install youtube-transcript-api pytube openai notion-client
+          pip install --upgrade pip
+          pip install --upgrade youtube-transcript-api pytube openai notion-client
 
       - name: Run script
         env:
