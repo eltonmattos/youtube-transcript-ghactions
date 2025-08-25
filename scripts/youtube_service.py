@@ -41,8 +41,15 @@ def poll_for_transcript(job_id: str) -> str:
             response.raise_for_status()
 
 def get_metadata(video_url: str) -> dict:
-    """Obtem titulo e canal sem custo usando yt-dlp"""
-    ydl_opts = {"quiet": True, "skip_download": True}
+    """Obtém título e canal usando yt-dlp, com user-agent para evitar bloqueio"""
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "forcejson": True,
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "geo_bypass": True,
+        "ignoreerrors": True
+    }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(video_url, download=False)
         return {
