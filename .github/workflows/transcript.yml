@@ -1,0 +1,43 @@
+name: YouTube Transcript to Notion
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_urls:
+        description: 'Lista de URLs separadas por vírgula'
+        required: true
+        default: ''
+
+jobs:
+  transcript:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          # 🔑 Secrets
+          SUPADATA_API_KEY: ${{ secrets.SUPADATA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+
+          # 🌍 Vars
+          NOTION_PARENT_ID: ${{ vars.NOTION_PARENT_ID }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_PROMPT: ${{ vars.AI_PROMPT }}
+          
+          # Input do workflow
+          VIDEO_URLS: ${{ github.event.inputs.video_urls }}
+        run: |
+          python scripts/main.py "$VIDEO_URLS"
