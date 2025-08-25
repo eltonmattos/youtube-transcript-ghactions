@@ -92,9 +92,11 @@ def process_text_with_openai(text):
         return text
 
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": f"{OPENAI_PROMPT}\n{text}"}]
+            messages=[
+                {"role": "user", "content": f"{OPENAI_PROMPT}\n{text}"}
+            ]
         )
         return response.choices[0].message.content
     except Exception as e:
