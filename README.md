@@ -50,7 +50,7 @@ Em `Settings > Secrets and variables > Actions > New repository variable` crie:
 Instale localmente (se quiser testar fora do Actions):
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt```
 
 ## ▶️ Execução
 
