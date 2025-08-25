@@ -1,0 +1,43 @@
+name: Process YouTube Transcripts via Supadata
+
+on:
+  workflow_dispatch:
+    inputs:
+      videos:
+        description: 'IDs ou URLs de vídeos do YouTube separados por espaço'
+        required: false
+        default: ''
+      playlist:
+        description: 'URL de uma playlist do YouTube'
+        required: false
+        default: ''
+
+jobs:
+  process_videos:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests notion-client openai
+
+      - name: Run script
+        env:
+          SUPADATA_API_KEY: ${{ secrets.SUPADATA_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PARENT_ID: ${{ secrets.NOTION_PARENT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.videos }}" ] || [ -n "${{ github.event.inputs.playlist }}" ]; then
+            python process_videos.py --videos "${{ github.event.inputs.videos }}" --playlist "${{ github.event.inputs.playlist }}"
+          else
+            echo "Nenhum vídeo ou playlist fornecido"
