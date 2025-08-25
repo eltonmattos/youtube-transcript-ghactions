@@ -1,7 +1,6 @@
 import os
 import argparse
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import openai
 from notion_client import Client
 
@@ -17,13 +16,12 @@ notion = Client(auth=NOTION_TOKEN)
 
 def download_transcript(video_id):
     """
-    Baixa transcrição usando youtube-transcript-api
+    Baixa transcrição usando youtube-transcript-api v1.2.2
     Prioriza pt-BR, depois pt
     """
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        transcript = transcript_list.find_transcript(['pt-BR', 'pt'])
-        text = " ".join([t['text'] for t in transcript.fetch()])
+        transcript_data = YouTubeTranscriptApi.get_transcript(video_id, languages=['pt-BR', 'pt'])
+        text = " ".join([t['text'] for t in transcript_data])
         return text
     except TranscriptsDisabled:
         print(f"Transcrição desativada para {video_id}")
@@ -63,21 +61,14 @@ def create_notion_page(title, content):
 
 def main():
     parser = argparse.ArgumentParser(description="Baixar transcrições e enviar ao Notion")
-    parser.add_argument("--playlist", type=str, help="URL da playlist do YouTube")
     parser.add_argument("--videos", nargs="+", help="IDs ou URLs de vídeos do YouTube")
     args = parser.parse_args()
 
-    video_list = []
-
-    # Se passou lista de vídeos
-    if args.videos:
-        video_list.extend(args.videos)
-
-    if not video_list:
+    if not args.videos:
         print("Nenhum vídeo fornecido")
         return
 
-    for vid_url in video_list:
+    for vid_url in args.videos:
         # Extrair o ID caso seja URL
         if "youtube.com/watch" in vid_url or "youtu.be/" in vid_url:
             import re
