@@ -50,7 +50,7 @@ jobs:
           fi
 
           if [ -n "$VIDEO_ARGS" ] || [ -n "$PLAYLIST_ARG" ]; then
-            python process_videos.py --videos $VIDEO_ARGS $PLAYLIST_ARG
+            python process_videos.py $VIDEO_ARGS $PLAYLIST_ARG
           else
             echo "Nenhum vídeo ou playlist fornecido"
           fi
