@@ -1,185 +1,154 @@
 import os
-import argparse
+import sys
 import requests
-import logging
-from notion_client import Client
-import openai
-import time
-
-# Configurações de logging
-logging.basicConfig(level=logging.INFO, format="INFO: %(message)s")
+from urllib.parse import urlparse, parse_qs
 
 # Variáveis de ambiente
-SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
-NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")  # normal, não secret
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
+AI_MODEL = os.getenv("AI_MODEL")
+AI_PROMPT = os.getenv("AI_PROMPT", "Process the following text:")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL")
-OPENAI_PROMPT = os.getenv("OPENAI_PROMPT", "Resuma o seguinte texto:")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Inicializa OpenAI
-if OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
+if not NOTION_TOKEN or not NOTION_PARENT_ID:
+    print("ERRO: NOTION_TOKEN e NOTION_PARENT_ID são obrigatórios")
+    sys.exit(1)
 
-# Inicializa Notion
-notion = None
-if NOTION_PARENT_ID:
+if not AI_MODEL:
+    print("ERRO: AI_MODEL não configurado")
+    sys.exit(1)
+
+# --------------------------
+# Funções auxiliares
+# --------------------------
+
+def get_video_id(url):
+    """Extrai o ID do vídeo do YouTube."""
+    parsed_url = urlparse(url)
+    if parsed_url.hostname in ["www.youtube.com", "youtube.com"]:
+        return parse_qs(parsed_url.query).get("v", [None])[0]
+    if parsed_url.hostname == "youtu.be":
+        return parsed_url.path.lstrip("/")
+    return None
+
+
+def get_video_title(video_id):
+    """Obtém título do vídeo via oEmbed (não precisa de API key)."""
     try:
-        notion = Client(auth=os.getenv("NOTION_TOKEN"))
-        logging.info("Notion configurado com sucesso")
-    except Exception as e:
-        logging.error(f"Erro ao configurar Notion: {e}")
-
-SUPADATA_TRANSCRIPT_ENDPOINT = "https://api.supadata.ai/v1/transcript"
-SUPADATA_PLAYLIST_ENDPOINT = "https://api.supadata.ai/v1/youtube/playlist"
-MAX_BLOCK_SIZE = 2000
-
-# -------- Funções --------
-
-def fetch_transcript(video_url):
-    headers = {"x-api-key": SUPADATA_API_KEY}
-    params = {"url": video_url, "text": False}
-    try:
-        resp = requests.get(SUPADATA_TRANSCRIPT_ENDPOINT, headers=headers, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        if 'content' in data:
-            content = data['content']
-            if isinstance(content, list):
-                return ' '.join(segment.get('text', '') for segment in content)
-            return content
-        elif resp.status_code == 202:
-            job_id = data.get("jobId")
-            return check_transcript_status(job_id)
-        else:
-            return ""
-    except Exception as e:
-        logging.error(f"Erro ao obter transcrição de {video_url}: {e}")
-        return ""
-
-def check_transcript_status(job_id):
-    headers = {"x-api-key": SUPADATA_API_KEY}
-    while True:
-        resp = requests.get(f"{SUPADATA_TRANSCRIPT_ENDPOINT}/{job_id}", headers=headers)
+        resp = requests.get(f"https://www.youtube.com/oembed?url=http://www.youtube.com/watch?v={video_id}&format=json")
         if resp.status_code == 200:
-            data = resp.json()
-            status = data.get("status")
-            if status == "completed":
-                content = data.get("content", [])
-                if isinstance(content, list):
-                    return ' '.join(segment.get('text', '') for segment in content)
-                return content
-            elif status == "failed":
-                logging.error("Transcrição falhou.")
-                return ""
-        time.sleep(5)
+            return resp.json().get("title", f"Vídeo {video_id}")
+    except Exception:
+        pass
+    return f"Vídeo {video_id}"
 
-def fetch_playlist_videos(playlist_url):
-    headers = {"x-api-key": SUPADATA_API_KEY}
-    params = {"url": playlist_url}
-    try:
-        resp = requests.get(SUPADATA_PLAYLIST_ENDPOINT, headers=headers, params=params, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        videos = [item.get("url") for item in data.get("videos", []) if item.get("url")]
-        return videos
-    except Exception as e:
-        logging.error(f"Erro ao obter vídeos da playlist {playlist_url}: {e}")
-        return []
 
-def process_text_with_openai(text):
-    if not OPENAI_API_KEY or not OPENAI_MODEL:
-        logging.warning("OpenAI não configurado, retornando texto original")
-        return text
-
-    try:
-        response = openai.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[
-                {"role": "user", "content": f"{OPENAI_PROMPT}\n{text}"}
-            ]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        logging.error(f"Erro no OpenAI: {e}")
-        return text
-
-def dividir_em_blocos(texto):
-    paragrafos = [p.strip() for p in texto.split("\n") if p.strip()]
-    blocos = []
-    bloco_atual = ""
-
-    for p in paragrafos:
-        if len(bloco_atual) + len(p) + 1 <= MAX_BLOCK_SIZE:
-            bloco_atual = f"{bloco_atual}\n{p}" if bloco_atual else p
-        else:
-            if bloco_atual:
-                blocos.append(bloco_atual)
-            while len(p) > MAX_BLOCK_SIZE:
-                blocos.append(p[:MAX_BLOCK_SIZE])
-                p = p[MAX_BLOCK_SIZE:]
-            bloco_atual = p
-
-    if bloco_atual:
-        blocos.append(bloco_atual)
-
-    return blocos
-
-def create_notion_page(title, texto):
-    if not notion:
-        logging.warning("Notion não configurado, pulando página")
-        return
-
-    blocos = dividir_em_blocos(texto)
-    children = [
-        {"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": b}}]}}
-        for b in blocos
-    ]
-
-    try:
-        notion.pages.create(
-            parent={"type": "page_id", "page_id": NOTION_PARENT_ID},
-            properties={"title": [{"type": "text", "text": {"content": title}}]},
-            children=children
-        )
-        logging.info(f"Página '{title}' criada no Notion ({len(blocos)} blocos)")
-    except Exception as e:
-        logging.error(f"Erro ao criar página no Notion: {e}")
-
-# -------- Main --------
-
-def main():
-    parser = argparse.ArgumentParser(description="Process YouTube transcripts via Supadata")
-    parser.add_argument("--videos", nargs="+", help="URLs ou IDs de vídeos do YouTube")
-    parser.add_argument("--playlist", help="URL de uma playlist do YouTube")
-    args = parser.parse_args()
-
-    video_urls = []
-
-    if args.videos:
-        for vid in args.videos:
-            if vid.startswith("http"):
-                video_urls.append(vid)
-            else:
-                video_urls.append(f"https://www.youtube.com/watch?v={vid}")
-
-    if args.playlist:
-        video_urls.extend(fetch_playlist_videos(args.playlist))
-
-    if not video_urls:
-        logging.warning("Nenhum vídeo fornecido")
-        return
-
-    for video_url in video_urls:
-        logging.info(f"Processando vídeo {video_url}...")
-        transcript = fetch_transcript(video_url)
-        if not transcript:
+def split_into_paragraphs(text, max_len=2000):
+    """Divide texto em blocos ≤2000 chars preservando parágrafos."""
+    paragraphs = []
+    for p in text.split("\n"):
+        p = p.strip()
+        if not p:
             continue
-        logging.info(f"Transcrição obtida ({len(transcript)} caracteres)")
+        while len(p) > max_len:
+            paragraphs.append(p[:max_len])
+            p = p[max_len:]
+        paragraphs.append(p)
+    return paragraphs
 
-        processed_text = process_text_with_openai(transcript)
-        logging.info(f"Texto processado ({len(processed_text)} caracteres)")
 
-        create_notion_page(f"Transcrição {video_url.split('=')[-1]}", processed_text)
+def send_to_ai(text):
+    """Decide engine e processa texto."""
+    if AI_MODEL.startswith("gpt-"):
+        if not OPENAI_API_KEY:
+            print("ERRO: OPENAI_API_KEY não configurado")
+            return text
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        try:
+            resp = client.chat.completions.create(
+                model=AI_MODEL,
+                messages=[{"role": "user", "content": f"{AI_PROMPT}\n{text}"}]
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            print(f"Erro OpenAI: {e}")
+            return text
+
+    elif AI_MODEL.startswith("gemini-"):
+        if not GEMINI_API_KEY:
+            print("ERRO: GEMINI_API_KEY não configurado")
+            return text
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_API_KEY)
+        try:
+            model = genai.GenerativeModel(AI_MODEL)
+            resp = model.generate_content(f"{AI_PROMPT}\n{text}")
+            return resp.text
+        except Exception as e:
+            print(f"Erro Gemini: {e}")
+            return text
+
+    else:
+        print(f"ERRO: Modelo '{AI_MODEL}' não suportado. Use 'gpt-*' ou 'gemini-*'")
+        return text
+
+
+def send_to_notion(video_title, paragraphs):
+    """Cria página no Notion com blocos de texto."""
+    url = "https://api.notion.com/v1/pages"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+
+    children = []
+    for p in paragraphs:
+        children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": p}}]
+            }
+        })
+
+    data = {
+        "parent": {"database_id": NOTION_PARENT_ID},
+        "properties": {
+            "title": [{"text": {"content": video_title}}]
+        },
+        "children": children
+    }
+
+    r = requests.post(url, headers=headers, json=data)
+    if r.status_code == 200:
+        page_id = r.json().get("id")
+        print(f"✅ Página '{video_title}' criada no Notion ({len(children)} blocos)")
+        return page_id
+    else:
+        print("❌ Erro ao criar página no Notion:", r.text)
+        return None
+
+
+# --------------------------
+# Fluxo principal
+# --------------------------
+
+def main(video_url, transcript_text):
+    video_id = get_video_id(video_url)
+    video_title = get_video_title(video_id)
+    print(f"INFO: Processando vídeo '{video_title}'...")
+
+    processed = send_to_ai(transcript_text)
+    paragraphs = split_into_paragraphs(processed)
+    send_to_notion(video_title, paragraphs)
+
 
 if __name__ == "__main__":
-    main()
+    # Exemplo de uso: python script.py "<url>" "<texto>"
+    if len(sys.argv) < 3:
+        print("Uso: python script.py <youtube_url> <transcricao>")
+        sys.exit(1)
+    main(sys.argv[1], sys.argv[2])
