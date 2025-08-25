@@ -27,13 +27,13 @@ jobs:
 
       - name: Run pipeline
         env:
-          # 🔑 Secrets
+          # Secrets
           SUPADATA_API_KEY: ${{ secrets.SUPADATA_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
 
-          # 🌍 Vars
+          # Vars
           NOTION_PARENT_ID: ${{ vars.NOTION_PARENT_ID }}
           AI_MODEL: ${{ vars.AI_MODEL }}
           AI_PROMPT: ${{ vars.AI_PROMPT }}

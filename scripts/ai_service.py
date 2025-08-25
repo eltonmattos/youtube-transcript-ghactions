@@ -13,20 +13,23 @@ def process_text(transcript: str, prompt: str, model: str) -> str:
     else:
         raise ValueError(f"Model {model} not supported")
 
-def process_with_openai(transcript: str, prompt: str, model: str) -> str:
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+def process_with_gemini(transcript: str, prompt: str, model: str) -> str:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
     payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": transcript}
+        "contents": [
+            {"role": "user", "parts": [{"text": f"{prompt}\n\n{transcript}"}]}
         ]
     }
-    response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
-    data = response.json()
-    return data["choices"][0]["message"]["content"].strip()
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP error {e.response.status_code}: {e.response.text}")
+        raise
+    return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+
 
 def process_with_gemini(transcript: str, prompt: str, model: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
