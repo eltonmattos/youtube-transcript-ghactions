@@ -15,21 +15,19 @@ def process_text(transcript: str, prompt: str, model: str) -> str:
 
 def process_with_gemini(transcript: str, prompt: str, model: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    headers = {"Authorization": f"Bearer {GEMINI_API_KEY}"}
+    headers = {
+        "X-goog-api-key": GEMINI_API_KEY,
+        "Content-Type": "application/json"
+    }
     payload = {
         "contents": [
-            {"role": "user", "parts": [{"text": f"{prompt}\n\n{transcript}"}]}
+            {"parts": [{"text": f"{prompt}\n\n{transcript}"}]}
         ]
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP error {e.response.status_code}: {e.response.text}")
-        raise
+    response = requests.post(url, headers=headers, json=payload)
+    response.raise_for_status()
     return response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-
 
 def process_with_gemini(transcript: str, prompt: str, model: str) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
