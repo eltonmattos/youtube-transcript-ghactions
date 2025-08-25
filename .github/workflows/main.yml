@@ -37,6 +37,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           AI_MODEL: ${{ secrets.AI_MODEL }}
           AI_PROMPT: ${{ secrets.AI_PROMPT }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_PARENT_ID: '25ac9d71c044805881f0d4218ebc2696'
         run: |
           VIDEO_ARGS=""
