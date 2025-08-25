@@ -1,186 +1,173 @@
 import os
 import sys
-import time
-import logging
 import requests
-from typing import List, Optional
+import time
+import openai
+import google.generativeai as genai
 
-logging.basicConfig(level=logging.INFO, format="INFO: %(message)s")
+# ==============================
+# Configurações via variáveis
+# ==============================
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
+SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
+AI_MODEL = os.getenv("AI_MODEL", "").strip()
+AI_PROMPT = os.getenv("AI_PROMPT", "Transforme o seguinte texto:")
 
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# ---------- SUPADATA ----------
-def get_transcript_supadata(video_url: str):
-    """
-    Obtém transcrição e título do vídeo via Supadata.
-    Retorna (transcrição, título).
-    """
-    SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
+if not NOTION_TOKEN or not NOTION_PARENT_ID:
+    print("ERROR: Variáveis do Notion não configuradas.")
+    sys.exit(1)
+
+if not SUPADATA_API_KEY:
+    print("ERROR: SUPADATA_API_KEY não configurada.")
+    sys.exit(1)
+
+if not AI_MODEL:
+    print("ERROR: AI_MODEL não configurada.")
+    sys.exit(1)
+
+print("INFO: Notion configurado com sucesso")
+print(f"INFO: NOTION_PARENT_ID='{NOTION_PARENT_ID}'")
+print(f"INFO: AI_MODEL='{AI_MODEL}'")
+print(f"INFO: AI_PROMPT='{AI_PROMPT}'")
+
+# ==============================
+# Funções auxiliares
+# ==============================
+
+def get_playlist_videos(playlist_url: str):
+    """Obtém lista de vídeos de uma playlist usando SupaData"""
+    api_url = f"https://api.supadata.ai/playlist?url={playlist_url}"
     headers = {"Authorization": f"Bearer {SUPADATA_API_KEY}"}
-    url = f"https://api.supadata.ai/transcript?url={video_url}"
-
-    logging.info(f"Processando vídeo {video_url}...")
-
-    resp = requests.get(url, headers=headers)
-    if resp.status_code != 200:
-        logging.error(f"Erro Supadata: {resp.text}")
-        return None, None
-
+    resp = requests.get(api_url, headers=headers, timeout=60)
+    resp.raise_for_status()
     data = resp.json()
-    transcript = data.get("text", "")
-    title = data.get("title", "Transcrição sem título")
-
-    logging.info(f"Transcrição obtida ({len(transcript)} caracteres), título='{title}'")
-    return transcript, title
+    return [item["url"] for item in data.get("videos", [])]
 
 
-# ---------- AI PROCESSING ----------
-def call_openai(model: str, prompt: str, text: str) -> Optional[str]:
-    import openai
+def get_video_transcript(video_url: str):
+    """Obtém transcrição e título do vídeo"""
+    api_url = f"https://api.supadata.ai/get-transcript?url={video_url}"
+    headers = {"Authorization": f"Bearer {SUPADATA_API_KEY}"}
+    resp = requests.get(api_url, headers=headers, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    text = " ".join([seg["text"] for seg in data.get("segments", [])])
+    title = data.get("title", "Transcrição")
+    return title, text
 
-    openai.api_key = os.getenv("OPENAI_API_KEY")
 
-    retries = 3
-    for attempt in range(retries):
+def split_paragraphs(text, max_len=2000):
+    """Divide texto em blocos <= 2000 caracteres"""
+    paragraphs = []
+    current = ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > max_len:
+            paragraphs.append(current.strip())
+            current = line
+        else:
+            current += " " + line
+    if current:
+        paragraphs.append(current.strip())
+    return paragraphs
+
+
+def process_with_ai(text):
+    """Envia texto para OpenAI ou Gemini"""
+    if AI_MODEL.startswith("gpt"):
+        if not OPENAI_API_KEY:
+            print("WARNING: OPENAI_API_KEY não configurada, retornando texto original")
+            return text
+        openai.api_key = OPENAI_API_KEY
         try:
             response = openai.chat.completions.create(
-                model=model,
+                model=AI_MODEL,
                 messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": text},
+                    {"role": "system", "content": AI_PROMPT},
+                    {"role": "user", "content": text}
                 ],
                 temperature=0.7,
             )
-            return response.choices[0].message.content
+            return response.choices[0].message.content.strip()
         except Exception as e:
-            logging.warning(f"Tentativa {attempt+1}/{retries} falhou: {e}")
-            time.sleep(2 ** attempt)
-    return None
+            print(f"ERROR: Erro no OpenAI: {e}")
+            return text
 
-
-def call_gemini(model: str, prompt: str, text: str) -> Optional[str]:
-    import google.generativeai as genai
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    genai.configure(api_key=api_key)
-
-    retries = 3
-    for attempt in range(retries):
+    elif AI_MODEL.startswith("gemini"):
+        if not GEMINI_API_KEY:
+            print("WARNING: GEMINI_API_KEY não configurada, retornando texto original")
+            return text
+        genai.configure(api_key=GEMINI_API_KEY)
         try:
-            model_gen = genai.GenerativeModel(model)
-            response = model_gen.generate_content(f"{prompt}\n\n{text}")
-            return response.text
+            model = genai.GenerativeModel(AI_MODEL)
+            response = model.generate_content(f"{AI_PROMPT}\n\n{text}")
+            return response.text.strip()
         except Exception as e:
-            logging.warning(f"Tentativa {attempt+1}/{retries} falhou: {e}")
-            time.sleep(2 ** attempt)
-    return None
-
-
-def process_with_ai(transcript: str, ai_model: str, ai_prompt: str) -> str:
-    if not ai_model:
-        logging.warning("AI_MODEL não configurado. Retornando texto original.")
-        return transcript
-
-    logging.info(f"Usando modelo AI: '{ai_model}'")
-
-    if ai_model.startswith("gpt"):
-        result = call_openai(ai_model, ai_prompt, transcript)
-    elif ai_model.startswith("gemini"):
-        result = call_gemini(ai_model, ai_prompt, transcript)
+            print(f"ERROR: Erro no Gemini: {e}")
+            return text
     else:
-        logging.error(f"Modelo não suportado: {ai_model}")
-        return transcript
-
-    if result:
-        logging.info(f"Texto processado ({len(result)} caracteres)")
-        return result
-    else:
-        logging.error("Falha no processamento AI, retornando transcrição bruta")
-        return transcript
+        print("WARNING: Modelo desconhecido, retornando texto original")
+        return text
 
 
-# ---------- NOTION ----------
-def split_into_blocks(text: str, max_len: int = 2000) -> List[str]:
-    paragraphs = text.split("\n")
-    blocks, current = [], ""
+def send_to_notion(title, text):
+    """Envia texto ao Notion como página"""
+    blocks = [{"object": "block", "type": "paragraph", "paragraph": {
+        "rich_text": [{"type": "text", "text": {"content": chunk}}]
+    }} for chunk in split_paragraphs(text)]
 
-    for p in paragraphs:
-        if len(current) + len(p) + 1 <= max_len:
-            current += ("\n" if current else "") + p
-        else:
-            blocks.append(current)
-            current = p
-    if current:
-        blocks.append(current)
-
-    return blocks
-
-
-def create_notion_page(title: str, content: str, parent_id: str):
-    notion_token = os.getenv("NOTION_TOKEN")
-    if not notion_token:
-        logging.error("NOTION_TOKEN não configurado")
-        return
+    payload = {
+        "parent": {"database_id": NOTION_PARENT_ID},
+        "properties": {"title": {"title": [{"text": {"content": title}}]}},
+        "children": blocks
+    }
 
     headers = {
-        "Authorization": f"Bearer {notion_token}",
+        "Authorization": f"Bearer {NOTION_TOKEN}",
         "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28",
+        "Notion-Version": "2022-06-28"
     }
 
-    blocks = split_into_blocks(content)
+    resp = requests.post("https://api.notion.com/v1/pages",
+                         headers=headers, json=payload, timeout=60)
 
-    children = []
-    for block in blocks:
-        children.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": [{"type": "text", "text": {"content": block[:2000]}}],
-            },
-        })
-
-    data = {
-        "parent": {"database_id": parent_id},
-        "properties": {
-            "title": [
-                {"type": "text", "text": {"content": title}}
-            ]
-        },
-        "children": children,
-    }
-
-    resp = requests.post("https://api.notion.com/v1/pages", headers=headers, json=data)
-    if resp.status_code != 200:
-        logging.error(f"Erro ao criar página no Notion: {resp.text}")
+    if resp.status_code == 200:
+        print(f"INFO: Página '{title}' criada no Notion ({len(blocks)} blocos)")
     else:
-        logging.info(f"Página '{title}' criada no Notion ({len(blocks)} blocos)")
+        print(f"ERROR: Erro ao criar página no Notion: {resp.text}")
 
 
-# ---------- MAIN ----------
-def main():
-    notion_parent_id = os.getenv("NOTION_PARENT_ID")
-    ai_model = os.getenv("AI_MODEL")
-    ai_prompt = os.getenv("AI_PROMPT", "Resuma o seguinte texto:")
+# ==============================
+# Execução principal
+# ==============================
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Uso: python script.py <url1> [url2 ...]")
+        sys.exit(1)
 
-    if not notion_parent_id:
-        logging.error("NOTION_PARENT_ID não configurado")
-        return
+    urls = sys.argv[1:]
 
-    logging.info("Notion configurado com sucesso")
-
-    video_urls = sys.argv[1:]
-    if not video_urls:
-        logging.error("Nenhum vídeo fornecido")
-        return
-
-    for url in video_urls:
-        transcript, title = get_transcript_supadata(url)
-        if not transcript:
+    for url in urls:
+        # Se for playlist, expande para vídeos
+        if "list=" in url:
+            print(f"INFO: Obtendo vídeos da playlist {url}")
+            try:
+                videos = get_playlist_videos(url)
+                urls.extend(videos)
+            except Exception as e:
+                print(f"ERROR: Falha ao obter playlist: {e}")
             continue
 
-        processed_text = process_with_ai(transcript, ai_model, ai_prompt)
-        create_notion_page(title, processed_text, notion_parent_id)
-
-
-if __name__ == "__main__":
-    main()
+        # Caso seja um vídeo
+        print(f"INFO: Processando vídeo {url}...")
+        try:
+            title, transcript = get_video_transcript(url)
+            print(f"INFO: Transcrição obtida ({len(transcript)} caracteres)")
+            processed = process_with_ai(transcript)
+            print(f"INFO: Texto processado ({len(processed)} caracteres)")
+            send_to_notion(title, processed)
+        except Exception as e:
+            print(f"ERROR: Falha ao processar vídeo {url}: {e}")
