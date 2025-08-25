@@ -1,11 +1,10 @@
-﻿# YouTube Transcript → Notion
+# YouTube Transcript to Notion usando Github Actions
 
 Este projeto baixa **transcrições de vídeos do YouTube**, processa o texto usando **IA (OpenAI ou Gemini)** e salva o conteúdo tratado como **páginas no Notion**, com os parágrafos divididos em blocos de até 2000 caracteres.
 
 O pipeline é projetado para rodar **100% na nuvem via GitHub Actions**.  
 Você pode rodar manualmente (workflow_dispatch) ou agendado (cron).
 
----
 
 ## 🚀 Estrutura
 
@@ -16,7 +15,7 @@ ai_service.py # Processa o texto com IA
 notion_service.py # Envia para o Notion
 requirements.txt # Dependências
 
----
+
 
 ## 🔑 Configuração
 
@@ -31,8 +30,6 @@ Vá em `Settings > Secrets and variables > Actions > New repository secret` e cr
 | `GEMINI_API_KEY`   | Chave da Google Gemini (se usar modelos `gemini-*`)    | ❌ |
 | `NOTION_TOKEN`     | Token da integração com o Notion                       | ✅ |
 
----
-
 ### 2. **Variáveis de ambiente (vars do GitHub)**
 
 Em `Settings > Secrets and variables > Actions > New repository variable` crie:
@@ -40,17 +37,16 @@ Em `Settings > Secrets and variables > Actions > New repository variable` crie:
 | Nome               | Exemplo                   | Descrição |
 |--------------------|---------------------------|-----------|
 | `NOTION_PARENT_ID` | `xxxxxxxxxxxxxxxxxx`      | ID da página/pasta onde as páginas serão criadas |
-| `AI_MODEL`         | `gpt-4o-mini` ou `gemini-1.5-flash` | Modelo usado para processamento |
+| `AI_MODEL`         | `gpt-4o-mini` ou `gemini-2.5-flash` | Modelo usado para processamento |
 | `AI_PROMPT`        | `"Format the transcript into paragraphs with punctuation."` | Prompt que define como tratar a transcrição |
-
----
 
 ## 📦 Dependências
 
 Instale localmente (se quiser testar fora do Actions):
 
 ```bash
-pip install -r requirements.txt```
+pip install -r requirements.txt
+```
 
 ## ▶️ Execução
 
@@ -80,7 +76,7 @@ Divide em blocos de até 2000 caracteres
 
 Cria página no Notion com título "[Título do vídeo] - [Canal]"
 
-⚠️ Observações
+## ⚠️ Observações
 
 Apenas a transcrição usa a Supadata API → economiza chamadas.
 
