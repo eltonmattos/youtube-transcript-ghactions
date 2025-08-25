@@ -1,7 +1,7 @@
 import os
 import argparse
-import requests
-from yt_dlp import YoutubeDL
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 import openai
 from notion_client import Client
 
@@ -15,46 +15,23 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # Inicializa cliente Notion
 notion = Client(auth=NOTION_TOKEN)
 
-def download_transcript(video_url):
+def download_transcript(video_id):
     """
-    Baixa transcrição priorizando:
-    1) Legenda manual pt-BR
-    2) Legenda automática pt-BR
-    Retorna texto simples
+    Baixa transcrição usando youtube-transcript-api
+    Prioriza pt-BR, depois pt
     """
-    ydl_opts = {
-        'skip_download': True,
-        'writesubtitles': True,
-        'subtitlesformat': 'vtt',
-        'quiet': True
-    }
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(video_url, download=False)
-
-        # Legenda manual pt-BR
-        subs = info.get('subtitles') or {}
-        if 'pt-BR' in subs:
-            url = subs['pt-BR'][0]['url']
-            return clean_vtt(requests.get(url).text)
-
-        # Legenda automática pt-BR
-        auto_subs = info.get('automatic_captions') or {}
-        if 'pt-BR' in auto_subs:
-            url = auto_subs['pt-BR'][0]['url']
-            return clean_vtt(requests.get(url).text)
-
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript = transcript_list.find_transcript(['pt-BR', 'pt'])
+        text = " ".join([t['text'] for t in transcript.fetch()])
+        return text
+    except TranscriptsDisabled:
+        print(f"Transcrição desativada para {video_id}")
+    except NoTranscriptFound:
+        print(f"Nenhuma transcrição disponível para {video_id}")
+    except Exception as e:
+        print(f"Erro ao baixar transcrição de {video_id}: {e}")
     return None
-
-def clean_vtt(vtt_text):
-    """Converte VTT em texto simples removendo timestamps"""
-    lines = vtt_text.splitlines()
-    clean_lines = []
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("WEBVTT") or '-->' in line:
-            continue
-        clean_lines.append(line)
-    return " ".join(clean_lines)
 
 def process_with_openai(text):
     """Gera resumo usando OpenAI"""
@@ -92,13 +69,6 @@ def main():
 
     video_list = []
 
-    # Se passou playlist
-    if args.playlist:
-        ydl_opts = {'quiet': True}
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(args.playlist, download=False)
-            video_list.extend([entry['webpage_url'] for entry in info['entries']])
-
     # Se passou lista de vídeos
     if args.videos:
         video_list.extend(args.videos)
@@ -108,15 +78,26 @@ def main():
         return
 
     for vid_url in video_list:
-        print(f"\n📺 Processando vídeo {vid_url}...")
-        transcript = download_transcript(vid_url)
+        # Extrair o ID caso seja URL
+        if "youtube.com/watch" in vid_url or "youtu.be/" in vid_url:
+            import re
+            match = re.search(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})", vid_url)
+            if match:
+                video_id = match.group(1)
+            else:
+                print(f"ID não encontrado em {vid_url}")
+                continue
+        else:
+            video_id = vid_url
+
+        print(f"\n📺 Processando vídeo {video_id}...")
+        transcript = download_transcript(video_id)
         if not transcript:
-            print(f"Transcrição não encontrada para {vid_url}")
             continue
 
         summary = process_with_openai(transcript) or "Resumo não disponível"
         md_content = f"# Transcrição\n\n{transcript}\n\n---\n\n# Resumo\n\n{summary}"
-        create_notion_page(f"Transcrição {vid_url}", md_content)
+        create_notion_page(f"Transcrição {video_id}", md_content)
 
 if __name__ == "__main__":
     main()
