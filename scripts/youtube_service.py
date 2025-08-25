@@ -1,10 +1,13 @@
+# -*- coding: utf-8 -*-
 import os
 import requests
-import yt_dlp
 
 SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
 
 def get_transcript(video_url: str, lang: str = "pt") -> str:
+    """
+    Obtém a transcrição via Supadata API
+    """
     headers = {
         "x-api-key": SUPADATA_API_KEY
     }
@@ -26,10 +29,12 @@ def get_transcript(video_url: str, lang: str = "pt") -> str:
     else:
         response.raise_for_status()
 
+
 def poll_for_transcript(job_id: str) -> str:
-    headers = {
-        "x-api-key": SUPADATA_API_KEY
-    }
+    """
+    Aguarda a conclusão do job de transcrição na Supadata
+    """
+    headers = {"x-api-key": SUPADATA_API_KEY}
 
     while True:
         response = requests.get(f"https://api.supadata.ai/v1/transcript/{job_id}", headers=headers)
@@ -40,27 +45,31 @@ def poll_for_transcript(job_id: str) -> str:
         else:
             response.raise_for_status()
 
+
 def get_metadata(video_url: str) -> dict:
-    """Obtém título e canal usando yt-dlp, com user-agent para evitar bloqueio"""
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-        "forcejson": True,
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-        "geo_bypass": True,
-        "ignoreerrors": True
+    """
+    Obtém título e canal do vídeo usando oEmbed do YouTube (sem cookies)
+    """
+    endpoint = "https://www.youtube.com/oembed"
+    params = {"url": video_url, "format": "json"}
+
+    response = requests.get(endpoint, params=params)
+    response.raise_for_status()
+    data = response.json()
+
+    return {
+        "title": data.get("title"),
+        "channel": data.get("author_name")
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(video_url, download=False)
-        return {
-            "title": info.get("title"),
-            "channel": info.get("uploader")
-        }
+
 
 def get_video_data(video_url: str, lang: str = "pt") -> dict:
-    """Combina metadados + transcricao"""
+    """
+    Combina metadados + transcrição
+    """
     transcript = get_transcript(video_url, lang)
     metadata = get_metadata(video_url)
+
     return {
         "title": metadata["title"],
         "channel": metadata["channel"],
