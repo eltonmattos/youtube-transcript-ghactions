@@ -1,0 +1,40 @@
+name: Process YouTube Transcripts
+
+on:
+  workflow_dispatch:
+    inputs:
+      videos:
+        description: 'IDs ou URLs de vídeos do YouTube separados por espaço'
+        required: false
+        default: ''
+
+jobs:
+  process_videos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          # Instala a versão mais recente do youtube-transcript-api diretamente do GitHub
+          pip install git+https://github.com/jdepoix/youtube-transcript-api.git@master
+          pip install --upgrade openai notion-client requests
+
+      - name: Run script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PARENT_ID: ${{ secrets.NOTION_PARENT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "${{ github.event.inputs.videos }}" ]; then
+            python process_videos.py --videos ${{ github.event.inputs.videos }}
+          else
+            echo "Nenhum vídeo fornecido"
+          fi
