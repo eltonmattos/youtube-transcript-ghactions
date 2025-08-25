@@ -5,15 +5,40 @@ import yt_dlp
 SUPADATA_API_KEY = os.getenv("SUPADATA_API_KEY")
 
 def get_transcript(video_url: str, lang: str = "pt") -> str:
-    """Obtem a transcricaoo via Supadata API"""
-    endpoint = "https://api.supadata.ai/youtube/transcript"
-    headers = {"Authorization": f"Bearer {SUPADATA_API_KEY}"}
-    params = {"url": video_url, "lang": lang}
+    headers = {
+        "x-api-key": SUPADATA_API_KEY
+    }
 
-    response = requests.get(endpoint, headers=headers, params=params)
-    response.raise_for_status()
-    data = response.json()
-    return data.get("transcript", "")
+    params = {
+        "url": video_url,
+        "lang": lang,
+        "text": True,
+        "mode": "auto"
+    }
+
+    response = requests.get("https://api.supadata.ai/v1/transcript", headers=headers, params=params)
+
+    if response.status_code == 200:
+        return response.json().get("content", "")
+    elif response.status_code == 202:
+        job_id = response.json().get("jobId")
+        return poll_for_transcript(job_id)
+    else:
+        response.raise_for_status()
+
+def poll_for_transcript(job_id: str) -> str:
+    headers = {
+        "x-api-key": SUPADATA_API_KEY
+    }
+
+    while True:
+        response = requests.get(f"https://api.supadata.ai/v1/transcript/{job_id}", headers=headers)
+        if response.status_code == 200:
+            return response.json().get("content", "")
+        elif response.status_code == 202:
+            continue
+        else:
+            response.raise_for_status()
 
 def get_metadata(video_url: str) -> dict:
     """Obtem titulo e canal sem custo usando yt-dlp"""
