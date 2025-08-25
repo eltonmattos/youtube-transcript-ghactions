@@ -40,6 +40,18 @@ Por padrão, o main.py vem com uma lista de URLs de exemplo.
 Você pode adaptar para receber:
 - Uma playlist do YouTube (iterar sobre vídeos)
 - Uma lista de URLs específica
+- 
+Você pode disparar um workflow programaticamente usando a API REST:
+
+```bash
+curl -X POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: token GITHUB_TOKEN" \
+  https://api.github.com/repos/eltonmattos/youtube-transcript-ghactions/actions/workflows/workflow.yml/dispatches \
+  -d '{"ref":"main", "inputs": {"VIDEO_URLS":"url1,url2"}}'
+```
+
+Útil para automatizações externas ou disparos a partir de outros sistemas.
 
 ## 📝 Funcionamento
 
