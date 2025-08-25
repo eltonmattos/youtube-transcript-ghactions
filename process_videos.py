@@ -2,6 +2,7 @@ import os
 import argparse
 import requests
 import time
+import random
 import logging
 from notion_client import Client
 from openai import OpenAI
@@ -16,7 +17,7 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_PROMPT = os.getenv("OPENAI_PROMPT", "Resuma o seguinte texto:")
+OPENAI_PROMPT = os.getenv("OPENAI_PROMPT", "")
 
 # ----------------------------
 # Inicializa clientes
@@ -96,32 +97,52 @@ def fetch_playlist_videos(playlist_url):
         return []
 
 # ----------------------------
-# Função de resumo OpenAI
+# Função de envio para IA
 # ----------------------------
-def summarize_text(text, chunk_size=3000):
+def process_text_with_ai(text, chunk_size=3000):
+    """
+    Envia o texto ao modelo OpenAI e retorna a resposta completa.
+    """
     if not client:
-        logging.warning("OpenAI não configurado, pulando resumo")
-        return "Resumo não disponível"
+        logging.warning("OpenAI não configurado, retornando texto original")
+        return text
 
     model = OPENAI_MODEL.strip() if OPENAI_MODEL else None
     if not model:
-        logging.error("OPENAI_MODEL não definido corretamente!")
-        return "Resumo não disponível"
+        logging.error("OPENAI_MODEL não definido corretamente, retornando texto original")
+        return text
 
     logging.info(f"Usando modelo OpenAI: '{model}'")
-    summaries = []
+
+    def call_ai(chunk):
+        retries = 3
+        for attempt in range(retries):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": f"{OPENAI_PROMPT}\n{chunk}"}]
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                if "429" in str(e):
+                    wait = (2 ** attempt) + random.random()
+                    logging.warning(f"429 Too Many Requests. Tentando novamente em {wait:.1f}s...")
+                    time.sleep(wait)
+                else:
+                    logging.error(f"Erro no OpenAI: {e}")
+                    return chunk
+        logging.error("Falha após várias tentativas, retornando chunk original")
+        return chunk
+
+    if len(text) <= chunk_size:
+        return call_ai(text)
+
+    processed_chunks = []
     for i in range(0, len(text), chunk_size):
         chunk = text[i:i+chunk_size]
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": f"{OPENAI_PROMPT}\n{chunk}"}]
-            )
-            summaries.append(response.choices[0].message.content)
-        except Exception as e:
-            logging.error(f"Erro no OpenAI: {e}")
-            summaries.append("Erro ao gerar resumo para este trecho.")
-    return "\n".join(summaries)
+        processed_chunks.append(call_ai(chunk))
+
+    return "\n".join(processed_chunks)
 
 # ----------------------------
 # Função Notion
@@ -148,7 +169,7 @@ def create_notion_page(title, content):
 # Main
 # ----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Obter transcrições e resumos via Supadata")
+    parser = argparse.ArgumentParser(description="Processar vídeos do YouTube via Supadata")
     parser.add_argument("--videos", nargs="+", help="URLs ou IDs de vídeos do YouTube")
     parser.add_argument("--playlist", help="URL de uma playlist do YouTube")
     args = parser.parse_args()
@@ -177,11 +198,10 @@ def main():
             continue
         logging.info(f"Transcrição obtida ({len(transcript)} caracteres)")
 
-        summary = summarize_text(transcript) or "Resumo não disponível"
-        logging.info(f"Resumo gerado ({len(summary)} caracteres)")
+        processed_text = process_text_with_ai(transcript)
+        logging.info(f"Texto processado ({len(processed_text)} caracteres)")
 
-        md_content = f"# Transcrição\n\n{transcript}\n\n---\n\n# Resumo\n\n{summary}"
-        create_notion_page(f"Transcrição {video_url.split('=')[-1]}", md_content)
+        create_notion_page(f"Transcrição {video_url.split('=')[-1]}", processed_text)
 
 if __name__ == "__main__":
     main()
