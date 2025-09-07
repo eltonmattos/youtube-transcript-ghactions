@@ -24,6 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install yt-dlp==2025.1.26 requests==2.32.3
+          pip install pytube==15.0.0
 
       - name: Run pipeline
         env:
