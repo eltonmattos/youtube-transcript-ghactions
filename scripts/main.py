@@ -64,26 +64,3 @@ def run_pipeline(video_urls: list[str]):
     for url in video_urls:
         url = url.strip()
         if not url:
-            continue
-        print(f"Processing video: {url}")
-        video_data = get_video_data(url)
-
-        processed_text = process_text(
-            video_data["transcript"],
-            ai_prompt,
-            ai_model
-        )
-
-        blocks = split_into_blocks(processed_text)
-        title = f"{video_data['title']} - {video_data['channel']}"
-        create_page(title, blocks)
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Por favor, passe a lista de URLs de vídeos ou playlists como argumento.")
-        sys.exit(1)
-
-    urls_input = sys.argv[1]
-    urls = [url.strip() for url in urls_input.split(",") if url.strip()]
-    expanded_urls = expand_urls(urls)
-    run_pipeline(expanded_urls)
