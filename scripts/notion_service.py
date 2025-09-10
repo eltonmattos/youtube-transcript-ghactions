@@ -4,13 +4,12 @@ import requests
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_PARENT_ID = os.getenv("NOTION_PARENT_ID")
 
-def create_page(title: str, blocks: list[str]) -> None:
+def create_page(title: str, video_url: str, transcript_blocks: list[str]) -> None:
     """
-    Cria uma página filha dentro de outra página no Notion com título e blocos de texto.
-
-    Observações:
-    - Não se deve usar `properties` com `title` para páginas filhas.
-    - O título é criado como o primeiro bloco do tipo `heading_1`.
+    Cria uma página no Notion com:
+    - Título oficial no campo `properties.title`
+    - Embed do vídeo logo abaixo do título
+    - Transcrição em blocos de parágrafo
     """
     url = "https://api.notion.com/v1/pages"
     headers = {
@@ -19,17 +18,14 @@ def create_page(title: str, blocks: list[str]) -> None:
         "Notion-Version": "2022-06-28"
     }
 
-    # Primeiro bloco será o título
+    # Blocos da página: primeiro embed, depois transcrição
     children = [{
         "object": "block",
-        "type": "heading_1",
-        "heading_1": {
-            "rich_text": [{"type": "text", "text": {"content": title}}]
-        }
+        "type": "embed",
+        "embed": {"url": video_url}
     }]
 
-    # Adiciona o restante dos blocos como parágrafos
-    for block in blocks:
+    for block in transcript_blocks:
         children.append({
             "object": "block",
             "type": "paragraph",
@@ -37,7 +33,13 @@ def create_page(title: str, blocks: list[str]) -> None:
         })
 
     payload = {
-        "parent": {"page_id": NOTION_PARENT_ID},  # página existente
+        "parent": {"page_id": NOTION_PARENT_ID},
+        "properties": {
+            "title": [{
+                "type": "text",
+                "text": {"content": title}
+            }]
+        },
         "children": children
     }
 
